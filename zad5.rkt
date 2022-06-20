@@ -18,7 +18,7 @@
   (letrecE [x : Symbol] [e1 : Exp] [e2 : Exp])
   (beginE [e1 : Exp] [e2 : Exp])
   (setE [x : Symbol] [e : Exp])
-  (while[b : Symbol] [e : Exp]))
+  (whileE[b : Exp] [e : (Listof Exp)]));good
 
 ;; parse ----------------------------------------
 
@@ -31,6 +31,9 @@
             (first (s-exp->list 
                     (second (s-exp->list s)))))
            (parse (third (s-exp->list s))))]
+    [(s-exp-match? `{while ANY {ANY ...} } s);Finished?
+     (whileE (parse (second (s-exp->list s)))
+          (map s-exp->symbol (s-exp->list (second (s-exp->list s)))))]
     [(s-exp-match? `{if ANY ANY ANY} s)
      (ifE (parse (second (s-exp->list s)))
           (parse (third (s-exp->list s)))
@@ -188,6 +191,8 @@
         (if v (eval l env) (eval r env))]
        [else
         (error 'eval "type error")])]
+    [(whileE b inst);TO DO
+     ]
     [(varE x)
      (lookup-env x env)]
     [(letE x e1 e2)
