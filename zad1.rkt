@@ -70,19 +70,28 @@
 
 
 
-(define (next-fact n fact)
-  (* n fact)
-  )
+;(define (next-fact n fact)
+;  (* n fact)
+;  )
 
 (define (fact-from n fact)
-  (define pom (next-fact (+ n 1) fact))
-  (stream-cons fact (next-fact (+ n 1) fact)))
+  ;(define pom (next-fact (+ n 1) fact))
+  (stream-cons fact (fact-from (+ 1 n) (* n fact))))
 
 (define fact-stream
-  (stream-cons 1 (fact-from 1 1)))
+  (fact-from 1 1))
 
-(define (h n)
+(define (h1 n)
   (stream-ref fact-stream n))
 
-;(define (b n)
- ; (map h (enumerate-interval 0 n)))
+;wersja 2
+(define (factorial-stream-acc)
+  (define (it n last)
+    (stream-cons (* last n) (it (+ n 1) (* last n))))
+  (stream-cons 1 (it 1 1)))
+
+(define (stream->list stream n)
+  (if (= n 0)
+      null
+      (cons (stream-car stream)
+            (stream->list (stream-cdr stream) (- n 1)))))
