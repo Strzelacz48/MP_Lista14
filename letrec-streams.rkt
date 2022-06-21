@@ -5,9 +5,6 @@
 
 ;; abstract syntax -------------------------------
 
-(define-type Op
-  (add) (sub) (mul) (div) (eql) (leq))
-
 (define-type Exp
   (numE [n : Number])
   (ifE [b : Exp] [l : Exp] [r : Exp])
@@ -16,9 +13,9 @@
   (lamE [x : Symbol] [e : Exp])
   (appE [e1 : Exp] [e2 : Exp])
   (letrecE [x : Symbol] [e1 : Exp] [e2 : Exp])
-  (beginE [e1 : Exp] [e2 : Exp])
-  (whileE [e1 : Exp] [e2 : Exp])
-  (setE [x : Symbol] [e : Exp]))
+  (consE [e1 : Exp] [e2 : Exp])
+  (carE [e : Exp])
+  (cdrE [e : Exp]))
 
 ;; parse ----------------------------------------
 
@@ -31,12 +28,17 @@
             (first (s-exp->list 
                     (second (s-exp->list s)))))
            (parse (third (s-exp->list s))))]
+    [(s-exp-match? `{cons ANY ANY} s)
+     (consE (parse (second (s-exp->list s)))
+            (parse (third (s-exp->list s))))]
+    [(s-exp-match? `{car ANY} s)
+     (carE (parse (second (s-exp->list s))))]
+    [(s-exp-match? `{cdr ANY} s)
+     (cdrE (parse (second (s-exp->list s))))]
     [(s-exp-match? `{if ANY ANY ANY} s)
      (ifE (parse (second (s-exp->list s)))
           (parse (third (s-exp->list s)))
           (parse (fourth (s-exp->list s))))]
-    [(s-exp-match? `{while ANY ANY} s)
-     (whileE (parse (second (s-exp->list s))) (parse (third (s-exp->list s))))]
     [(s-exp-match? `SYMBOL s)
      (varE (s-exp->symbol s))]
     [(s-exp-match? `{let SYMBOL ANY ANY} s)
@@ -47,12 +49,6 @@
      (letrecE (s-exp->symbol (second (s-exp->list s)))
               (parse (third (s-exp->list s)))
               (parse (fourth (s-exp->list s))))]
-    [(s-exp-match? `{begin ANY ANY} s)
-     (beginE(parse (second (s-exp->list s)))
-            (parse (third (s-exp->list s))))]
-    [(s-exp-match? `{set! SYMBOL ANY} s)
-     (setE (s-exp->symbol (second (s-exp->list s)))
-           (parse (third (s-exp->list s))))]
     [(s-exp-match? `{SYMBOL ANY ANY} s)
      (appE (appE (varE (parse-op (s-exp->symbol (first (s-exp->list s)))))
                  (parse (second (s-exp->list s))))
@@ -72,7 +68,7 @@
 (module+ test
   (test (parse `2)
         (numE 2))
-    (test (parse `2)
+  (test (parse `2)
         (numE 2))
   (test (parse `{+ 2 1})
         (appE (appE (varE '+) (numE 2)) (numE 1)))
@@ -98,7 +94,28 @@
   (boolV [b : Boolean])
   (funV [x : Symbol] [e : Exp] [env : Env])
   (primopV [f : (Value -> Value)])
-  (voidV))
+  (consV [h : Value] [t : Promise]))
+
+;; thunks
+
+(define-type Thunk
+  (valueT [v : Value])
+  (thunkT [e : Exp] [env : Env]))
+
+(define-type-alias Promise (Boxof Thunk))
+
+(define (delay [e : Exp] [env : Env]) : Promise
+  (box (thunkT e env)))
+
+(define (force [p : Promise]) : Value
+  (type-case Thunk (unbox p)
+    [(valueT v)
+     v]
+    [(thunkT e env)
+     (let ([v (eval e env)])
+       (begin
+         (set-box! p (valueT v))
+         v))]))
 
 ;; environments
 
@@ -132,7 +149,7 @@
 (define (lookup-env [x : Symbol] [env : Env]) : Value
   (type-case Storable (unbox (find-var env x))
     [(valS v) v]
-    [(undefS) (error 'lookup-env "undefined variable")]))
+    [(undefS) (error 'lookup-env "undefined object")]))
    
 (define (update-env! [env : Env] [x : Symbol] [v : Value]) : Void
   (set-box! (find-var env x) (valS v)))
@@ -183,17 +200,12 @@
 
 (define (eval [e : Exp] [env : Env]) : Value
   (type-case Exp e
-    [(numE n) (numV n)]
+    [(numE n)
+     (numV n)]
     [(ifE b l r)
      (type-case Value (eval b env)
        [(boolV v)
         (if v (eval l env) (eval r env))]
-       [else
-        (error 'eval "type error")])]
-    [(whileE war body)
-     (type-case Value (eval war env)
-       [(boolV v)
-        (if v (begin (eval body env) (eval (whileE war body) env)) (voidV) )]
        [else
         (error 'eval "type error")])]
     [(varE x)
@@ -210,21 +222,27 @@
             [v1 (eval e1 new-env)])
        (begin (update-env! new-env x v1) 
               (eval e2 new-env)))]
-    [(beginE e1 e2)
-     (begin (eval e1 env)
-            (eval e2 env))]
-    [(setE x e0)
-     (begin 
-       (update-env! env x (eval e0 env))
-       (voidV))]))
+    [(consE e1 e2)
+     (consV (eval e1 env)
+            (delay e2 env))]
+    [(carE e0)
+     (type-case Value (eval e0 env)
+       [(consV v _)
+        v]
+       [else (error 'eval "not a stream")])]
+    [(cdrE e0)
+     (type-case Value (eval e0 env)
+       [(consV _ p)
+        (force p)]
+       [else (error 'eval "not a stream")])]))
 
-(define (apply v1 v2)
+(define (apply [v1 : Value] [v2 : Value]) : Value
   (type-case Value v1
     [(funV x b env)
      (eval b (extend-env env x v2))]
     [(primopV f)
      (f v2)]
-    [else (error 'apply "not a function")]))
+    [else (error 'apply "type error")]))
 
 (define (run [e : S-Exp]) : Value
   (eval (parse e) init-env))
@@ -252,14 +270,19 @@
         (numV 7))
   (test (run `{{lambda {x} {+ x 1}} 5})
         (numV 6))
-  (test (run `{letrec fact {lambda {n}
-                             {if {= n 0}
-                                 1
-                                 {* n {fact {- n 1}}}}}
-                {fact 5}})
-        (numV 120))
-  (test (run `{let x 1 {begin {set! x 2} x}})
-        (numV 2)))
+  (test (run `{letrec ones {cons 1 ones}
+                {car (cdr ones)}})
+        (numV 1))
+  (test (run `{letrec map2
+                {lambda {f}
+                  {lambda {xs}
+                    {lambda {ys}
+                      {cons {{f {car xs}} {car ys}}
+                            {{{map2 f} {cdr xs}} {cdr ys}}}}}}
+                {letrec ones {cons 1 ones}
+                  {letrec nats {cons 0 {{{map2 +} nats} ones}}
+                    {car {cdr {cdr {cdr nats}}}}}}})
+        (numV 3)))
 
 ;; printer ———————————————————————————————————-
 
@@ -269,10 +292,10 @@
     [(boolV b) (if b "true" "false")]
     [(funV x e env) "#<procedure>"]
     [(primopV f) "#<primop>"]
-    [(voidV) ""]))
+    [(consV v p) "#<stream>"]))
 
 (define (print-value [v : Value]) : Void
   (display (value->string v)))
 
 (define (main [e : S-Exp]) : Void
-  (print-value (eval (parse e) mt-env)))
+  (print-value (eval (parse e) init-env)))
